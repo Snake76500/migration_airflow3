@@ -12,6 +12,7 @@ from .datasets import DatasetToAssetMigrationRule
 from .db_access import DatabaseAccessMigrationRule
 from .config_rules import ConfigMigrationRule
 from .dependencies import DependenciesMigrationRule
+from .product_action import ProductActionMigrationRule
 
 
 def get_all_rules() -> List[BaseRule]:
@@ -25,6 +26,7 @@ def get_all_rules() -> List[BaseRule]:
         DatabaseAccessMigrationRule(),
         ConfigMigrationRule(),
         DependenciesMigrationRule(),
+        ProductActionMigrationRule(),
     ]
 
 
@@ -41,5 +43,6 @@ __all__ = [
     "DatabaseAccessMigrationRule",
     "ConfigMigrationRule",
     "DependenciesMigrationRule",
+    "ProductActionMigrationRule",
     "get_all_rules",
 ]

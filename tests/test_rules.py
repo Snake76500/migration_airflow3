@@ -11,6 +11,7 @@ from airflow3_migrator.rules.datasets import DatasetToAssetMigrationRule
 from airflow3_migrator.rules.db_access import DatabaseAccessMigrationRule
 from airflow3_migrator.rules.config_rules import ConfigMigrationRule
 from airflow3_migrator.rules.dependencies import DependenciesMigrationRule
+from airflow3_migrator.rules.product_action import ProductActionMigrationRule
 
 
 class TestMigrationRules(unittest.TestCase):
@@ -118,6 +119,35 @@ class TestMigrationRules(unittest.TestCase):
         fixed, applied = rule.fix(reqs, "requirements.txt")
         self.assertIn("apache-airflow>=3.0.0", fixed)
         self.assertIn("apache-airflow-providers-standard>=1.0.0", fixed)
+
+    def test_product_action_migration(self):
+        rule = ProductActionMigrationRule()
+        code = (
+            "from datetime import datetime\n\n"
+            '@product_action("xxx", payload=yyy, tags=["zzz"])\n'
+            "def my_task():\n"
+            "    pass\n"
+        )
+        issues = rule.analyze(code, "dag.py")
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].rule_id, "AIR310_PRODUCT_ACTION")
+
+        fixed, applied = rule.fix(code, "dag.py")
+        # Verify imports added
+        self.assertIn("from pathlib import Path", fixed)
+        self.assertIn("from bp2i_airflow_library.config import ENVIRONMENT", fixed)
+        self.assertIn("from bp2i_airflow_library.version_compat import AIRFLOW_V_3_0_PLUS", fixed)
+        # Verify action_id dynamic replacement
+        self.assertIn('Path(__file__).stem.replace(".v1.", ".v2")', fixed)
+        self.assertIn('if AIRFLOW_V_3_0_PLUS and not ENVIRONMENT.endswith("prod")', fixed)
+        self.assertIn("else Path(__file__).stem", fixed)
+        self.assertIn("payload=yyy", fixed)
+        self.assertIn('tags=["zzz"]', fixed)
+
+        # Verify idempotency
+        fixed_again, applied_again = rule.fix(fixed, "dag.py")
+        self.assertEqual(len(applied_again), 0)
+        self.assertEqual(fixed, fixed_again)
 
 
 if __name__ == "__main__":
