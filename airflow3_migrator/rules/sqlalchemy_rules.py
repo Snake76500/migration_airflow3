@@ -31,34 +31,62 @@ class SQLAlchemyMigrationRule(BaseRule):
 
         lines = content.splitlines()
 
+        # Identify nodes already inside an 'if AIRFLOW_V_3_0_PLUS:' statement
+        compat_if_node_ids = set()
         for node in ast.walk(tree):
-            # 1. declarative_base import from sqlalchemy.ext.declarative
+            if isinstance(node, ast.If) and "AIRFLOW_V_3_0_PLUS" in ast.unparse(node.test):
+                for child in ast.walk(node):
+                    if child is not node:
+                        compat_if_node_ids.add(id(child))
+
+        for node in ast.walk(tree):
+            # 1. declarative imports from sqlalchemy.ext.declarative
             if isinstance(node, ast.ImportFrom) and node.module == "sqlalchemy.ext.declarative":
-                for alias in node.names:
-                    if alias.name == "declarative_base":
-                        line_idx = node.lineno - 1
-                        line_content = lines[line_idx] if line_idx < len(lines) else ""
-                        indent = re.match(r"^\s*", line_content).group(0)
-                        suggested = f"{indent}from sqlalchemy.orm import declarative_base"
-                        issues.append(
-                            MigrationIssue(
-                                rule_id="SQLA20_DECLARATIVE_BASE",
-                                category=self.category,
-                                severity=IssueSeverity.WARNING,
-                                title="Déplacement de declarative_base vers sqlalchemy.orm",
-                                description=(
-                                    "Dans SQLAlchemy 2.0, 'declarative_base' a été déplacé de "
-                                    "'sqlalchemy.ext.declarative' vers 'sqlalchemy.orm'."
-                                ),
-                                line_number=node.lineno,
-                                column=node.col_offset,
-                                file_path=file_path,
-                                auto_fixable=True,
-                                original_code=line_content,
-                                suggested_code=suggested,
-                                documentation_url=self.documentation_url,
-                            )
-                        )
+                if id(node) in compat_if_node_ids:
+                    continue
+                line_idx = node.lineno - 1
+                line_content = lines[line_idx] if line_idx < len(lines) else ""
+                indent = re.match(r"^\s*", line_content).group(0)
+                names_str = ", ".join(
+                    f"{a.name} as {a.asname}" if a.asname else a.name for a in node.names
+                )
+
+                if self.dual_compat:
+                    suggested = (
+                        f"{indent}if AIRFLOW_V_3_0_PLUS:\n"
+                        f"{indent}    from sqlalchemy.orm import {names_str}\n"
+                        f"{indent}else:\n"
+                        f"{indent}    from sqlalchemy.ext.declarative import {names_str}"
+                    )
+                    title = "Import bi-compatible de SQLAlchemy declarative (Airflow 2 & 3)"
+                    desc = (
+                        "Importation conditionnelle de 'sqlalchemy.orm' (Airflow 3 / SQLAlchemy 2.0) "
+                        "ou 'sqlalchemy.ext.declarative' (Airflow 2 / SQLAlchemy 1.4)."
+                    )
+                else:
+                    suggested = f"{indent}from sqlalchemy.orm import {names_str}"
+                    title = "Déplacement de declarative_base vers sqlalchemy.orm"
+                    desc = (
+                        "Dans SQLAlchemy 2.0, les éléments de 'sqlalchemy.ext.declarative' "
+                        "ont été déplacés vers 'sqlalchemy.orm'."
+                    )
+
+                issues.append(
+                    MigrationIssue(
+                        rule_id="SQLA20_DECLARATIVE_BASE",
+                        category=self.category,
+                        severity=IssueSeverity.WARNING,
+                        title=title,
+                        description=desc,
+                        line_number=node.lineno,
+                        column=node.col_offset,
+                        file_path=file_path,
+                        auto_fixable=True,
+                        original_code=line_content,
+                        suggested_code=suggested,
+                        documentation_url=self.documentation_url,
+                    )
+                )
 
             # 2. engine.execute(...) or conn.execute("raw sql") / session.execute("raw sql")
             elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "execute":
@@ -217,4 +245,9 @@ class SQLAlchemyMigrationRule(BaseRule):
             except SyntaxError:
                 pass
 
-        return "".join(lines), applied
+        result = "".join(lines)
+        if self.dual_compat and any(i.rule_id == "SQLA20_DECLARATIVE_BASE" for i in applied):
+            result = self.ensure_airflow_v3_compat_import(result)
+
+        return result, applied
+

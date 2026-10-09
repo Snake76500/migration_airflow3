@@ -207,7 +207,7 @@ class TestMigrationRules(unittest.TestCase):
         self.assertEqual(fixed, fixed_again)
 
     def test_sqlalchemy_2_migration(self):
-        rule = SQLAlchemyMigrationRule()
+        rule = SQLAlchemyMigrationRule(dual_compat=False)
         code = (
             "from sqlalchemy.ext.declarative import declarative_base\n"
             "Base = declarative_base()\n"
@@ -226,6 +226,32 @@ class TestMigrationRules(unittest.TestCase):
         engine_issues = rule.analyze(engine_code, "task.py")
         self.assertEqual(len(engine_issues), 2)
         self.assertTrue(any(i.rule_id == "SQLA20_ENGINE_EXECUTE" for i in engine_issues))
+
+    def test_dual_compat_sqlalchemy_imports(self):
+        # 1. Via SQLAlchemyMigrationRule directly
+        rule = SQLAlchemyMigrationRule(dual_compat=True)
+        code = "from sqlalchemy.ext.declarative import declarative_base\n"
+        fixed, applied = rule.fix(code, "task.py")
+        self.assertIn("AIRFLOW_V_3_0_PLUS", fixed)
+        self.assertIn("if AIRFLOW_V_3_0_PLUS:", fixed)
+        self.assertIn("from sqlalchemy.orm import declarative_base", fixed)
+        self.assertIn("else:", fixed)
+        self.assertIn("from sqlalchemy.ext.declarative import declarative_base", fixed)
+
+        # 2. Combined with Airflow imports in ImportsMigrationRule
+        import_rule = ImportsMigrationRule(dual_compat=True)
+        combined_code = (
+            "from airflow.operators.bash_operator import BashOperator\n"
+            "from sqlalchemy.ext.declarative import declarative_base\n"
+        )
+        combined_fixed, _ = import_rule.fix(combined_code, "dag.py")
+        self.assertIn("if AIRFLOW_V_3_0_PLUS:", combined_fixed)
+        self.assertIn("from airflow.providers.standard.operators.bash import BashOperator", combined_fixed)
+        self.assertIn("from sqlalchemy.orm import declarative_base", combined_fixed)
+        self.assertIn("else:", combined_fixed)
+        self.assertIn("from airflow.operators.bash_operator import BashOperator", combined_fixed)
+        self.assertIn("from sqlalchemy.ext.declarative import declarative_base", combined_fixed)
+
 
     def test_dual_compat_imports(self):
         rule = ImportsMigrationRule(dual_compat=True)

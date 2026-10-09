@@ -134,12 +134,14 @@ if AIRFLOW_V_3_0_PLUS:
     from airflow.providers.standard.operators.python import PythonOperator
     from airflow.providers.standard.operators.empty import EmptyOperator, EmptyOperator as DummyOperator
     from airflow.sdk import Asset, Asset as Dataset, get_current_context
+    from sqlalchemy.orm import declarative_base
 else:
     from airflow.operators.bash_operator import BashOperator
     from airflow.operators.python_operator import PythonOperator
     from airflow.operators.dummy_operator import DummyOperator, DummyOperator as EmptyOperator
     from airflow.datasets import Dataset, Dataset as Asset
     from airflow.operators.python import get_current_context
+    from sqlalchemy.ext.declarative import declarative_base
 ```
 
 2. **Différences dans le code gérées dynamiquement** :

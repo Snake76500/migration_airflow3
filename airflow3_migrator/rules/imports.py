@@ -48,6 +48,8 @@ MODULE_MAPPINGS = {
     "airflow.decorators": "airflow.sdk",
     "airflow.utils.task_group": "airflow.sdk",
     "airflow.datasets": "airflow.sdk",
+    # SQLAlchemy (Airflow 2: 1.4 -> Airflow 3: 2.0)
+    "sqlalchemy.ext.declarative": "sqlalchemy.orm",
 }
 
 # Specific symbol transformations
