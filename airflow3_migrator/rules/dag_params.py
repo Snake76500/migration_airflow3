@@ -1,5 +1,6 @@
 """
 Rule for migrating DAG definition parameters (schedule_interval -> schedule, sla deprecation).
+Supports dual-compatibility mode (Airflow 2 & 3).
 """
 
 import ast
@@ -14,7 +15,8 @@ class DagParamsMigrationRule(BaseRule):
     title = "Remplacement de schedule_interval par schedule"
     description = (
         "Le paramètre 'schedule_interval' a été supprimé dans Airflow 3 au profit de 'schedule'. "
-        "Les définitions de DAGs (via DAG() ou @dag()) doivent utiliser 'schedule'."
+        "Les définitions de DAGs (via DAG() ou @dag()) doivent utiliser 'schedule', "
+        "ou le pattern bi-compatible 'if AIRFLOW_V_3_0_PLUS'."
     )
     documentation_url = "https://airflow.apache.org/docs/apache-airflow/stable/upgrading-to-airflow-3.html"
 
@@ -46,18 +48,33 @@ class DagParamsMigrationRule(BaseRule):
                         if kw.arg == "schedule_interval":
                             kw_line_idx = kw.lineno - 1
                             kw_line = lines[kw_line_idx] if kw_line_idx < len(lines) else ""
-                            suggested = re.sub(r"\bschedule_interval\s*=", "schedule=", kw_line)
+
+                            if self.dual_compat:
+                                suggested = re.sub(
+                                    r'\bschedule_interval\s*=\s*((\"[^\"]+\")|(\'[^\']+\'))',
+                                    r'**({"schedule": \1} if AIRFLOW_V_3_0_PLUS else {"schedule_interval": \1})',
+                                    kw_line,
+                                )
+                                if suggested == kw_line:
+                                    suggested = re.sub(
+                                        r'\bschedule_interval\s*=\s*([^,\)\n]+)',
+                                        r'**({"schedule": \1} if AIRFLOW_V_3_0_PLUS else {"schedule_interval": \1})',
+                                        kw_line,
+                                    )
+                                title = "Paramétrage bi-compatible de schedule (Airflow 2 & 3)"
+                                desc = "Utilisation de **({... if AIRFLOW_V_3_0_PLUS else ...}) pour supporter Airflow 2 et 3 simultanément."
+                            else:
+                                suggested = re.sub(r"\bschedule_interval\s*=", "schedule=", kw_line)
+                                title = "Remplacement de 'schedule_interval' par 'schedule'"
+                                desc = "Le paramètre 'schedule_interval' a été définitivement supprimé dans Airflow 3. Utilisez 'schedule' à la place."
 
                             issues.append(
                                 MigrationIssue(
                                     rule_id=self.rule_id,
                                     category=self.category,
                                     severity=IssueSeverity.WARNING,
-                                    title="Remplacement de 'schedule_interval' par 'schedule'",
-                                    description=(
-                                        "Le paramètre 'schedule_interval' a été définitivement supprimé dans Airflow 3. "
-                                        "Utilisez 'schedule' à la place."
-                                    ),
+                                    title=title,
+                                    description=desc,
                                     line_number=kw.lineno,
                                     column=kw.col_offset,
                                     file_path=file_path,
@@ -109,7 +126,13 @@ class DagParamsMigrationRule(BaseRule):
         for issue in fixable:
             idx = issue.line_number - 1
             if idx < len(lines):
-                lines[idx] = re.sub(r"\bschedule_interval\s*=", "schedule=", lines[idx])
+                has_nl = lines[idx].endswith("\n")
+                lines[idx] = issue.suggested_code + ("\n" if has_nl else "")
                 applied.append(issue)
 
-        return "".join(lines), applied
+        result = "".join(lines)
+        if self.dual_compat and applied:
+            result = self.ensure_airflow_v3_compat_import(result)
+
+        return result, applied
+

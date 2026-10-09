@@ -24,6 +24,11 @@ def create_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument("path", nargs="?", default=".", help="Chemin du projet ou fichier à analyser (défaut: .)")
     scan_parser.add_argument("--no-diff", action="store_true", help="Masquer le diff de code dans la console")
     scan_parser.add_argument("--no-color", action="store_true", help="Désactiver les couleurs ANSI")
+    scan_parser.add_argument(
+        "--dual-compat",
+        action="store_true",
+        help="Mode bi-compatible Airflow 2 et Airflow 3 (génère des blocs 'if AIRFLOW_V_3_0_PLUS:')",
+    )
 
     # Command: report (generate report files)
     report_parser = subparsers.add_parser("report", help="Générer un rapport complet (HTML, Markdown, JSON)")
@@ -39,12 +44,22 @@ def create_parser() -> argparse.ArgumentParser:
         default=".",
         help="Répertoire de sortie pour enregistrer les rapports (défaut: .)",
     )
+    report_parser.add_argument(
+        "--dual-compat",
+        action="store_true",
+        help="Mode bi-compatible Airflow 2 et Airflow 3 (génère des blocs 'if AIRFLOW_V_3_0_PLUS:')",
+    )
 
     # Command: apply (apply fixes)
     apply_parser = subparsers.add_parser("apply", help="Appliquer les modifications automatiques au code")
     apply_parser.add_argument("path", nargs="?", default=".", help="Chemin du projet à modifier (défaut: .)")
     apply_parser.add_argument("--no-backup", action="store_true", help="Ne pas créer de sauvegarde avant modification")
     apply_parser.add_argument("--interactive", action="store_true", help="Demander confirmation avant d'appliquer")
+    apply_parser.add_argument(
+        "--dual-compat",
+        action="store_true",
+        help="Appliquer les modifications en mode bi-compatible Airflow 2 et Airflow 3 (if AIRFLOW_V_3_0_PLUS:)",
+    )
 
     # Command: rollback (restore previous backup)
     rollback_parser = subparsers.add_parser("rollback", help="Restaurer la dernière sauvegarde de sécurité")
@@ -53,12 +68,18 @@ def create_parser() -> argparse.ArgumentParser:
     # Command: check (CI/CD mode)
     check_parser = subparsers.add_parser("check", help="Vérifier la conformité Airflow 3 (code retour > 0 si anomalie)")
     check_parser.add_argument("path", nargs="?", default=".", help="Chemin du projet (défaut: .)")
+    check_parser.add_argument(
+        "--dual-compat",
+        action="store_true",
+        help="Vérifier la conformité avec prise en compte du mode bi-compatible",
+    )
 
     return parser
 
 
 def handle_scan(args: argparse.Namespace) -> int:
-    engine = MigrationEngine(args.path)
+    dual_compat = getattr(args, "dual_compat", False)
+    engine = MigrationEngine(args.path, dual_compat=dual_compat)
     summary = engine.analyze()
     reporter = MigrationReporter(summary)
     reporter.print_console_summary(show_diffs=not args.no_diff, use_color=not args.no_color)
@@ -66,7 +87,8 @@ def handle_scan(args: argparse.Namespace) -> int:
 
 
 def handle_report(args: argparse.Namespace) -> int:
-    engine = MigrationEngine(args.path)
+    dual_compat = getattr(args, "dual_compat", False)
+    engine = MigrationEngine(args.path, dual_compat=dual_compat)
     summary = engine.analyze()
     reporter = MigrationReporter(summary)
     out_dir = Path(args.output_dir).resolve()
@@ -103,7 +125,8 @@ def handle_report(args: argparse.Namespace) -> int:
 
 
 def handle_apply(args: argparse.Namespace) -> int:
-    engine = MigrationEngine(args.path)
+    dual_compat = getattr(args, "dual_compat", False)
+    engine = MigrationEngine(args.path, dual_compat=dual_compat)
 
     # First analyze to show what will be changed
     summary = engine.analyze()
@@ -142,10 +165,12 @@ def handle_rollback(args: argparse.Namespace) -> int:
 
 
 def handle_check(args: argparse.Namespace) -> int:
-    engine = MigrationEngine(args.path)
+    dual_compat = getattr(args, "dual_compat", False)
+    engine = MigrationEngine(args.path, dual_compat=dual_compat)
     summary = engine.analyze()
     reporter = MigrationReporter(summary)
     reporter.print_console_summary(show_diffs=False)
+
 
     if summary.critical_issues > 0 or summary.warning_issues > 0:
         print(f"❌ Échec de la vérification : {summary.total_issues} anomalie(s) détectée(s).")

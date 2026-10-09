@@ -224,6 +224,53 @@ class TestMigrationRules(unittest.TestCase):
         self.assertEqual(len(engine_issues), 2)
         self.assertTrue(any(i.rule_id == "SQLA20_ENGINE_EXECUTE" for i in engine_issues))
 
+    def test_dual_compat_imports(self):
+        rule = ImportsMigrationRule(dual_compat=True)
+        code = (
+            "from airflow.operators.bash_operator import BashOperator\n"
+            "from airflow.operators.python_operator import PythonOperator\n"
+            "from airflow.operators.dummy_operator import DummyOperator\n"
+            "from airflow.operators.python import get_current_context\n"
+        )
+        issues = rule.analyze(code, "dag.py")
+        self.assertTrue(any(i.rule_id == "AIR302_DUAL_COMPAT" for i in issues))
+
+        fixed, applied = rule.fix(code, "dag.py")
+        self.assertIn("AIRFLOW_V_3_0_PLUS", fixed)
+        self.assertIn("if AIRFLOW_V_3_0_PLUS:", fixed)
+        self.assertIn("else:", fixed)
+        # Check v3 branch
+        self.assertIn("from airflow.providers.standard.operators.bash import BashOperator", fixed)
+        self.assertIn("from airflow.providers.standard.operators.python import PythonOperator", fixed)
+        self.assertIn("from airflow.providers.standard.operators.empty import EmptyOperator", fixed)
+        self.assertIn("from airflow.sdk import get_current_context", fixed)
+        # Check v2 branch
+        self.assertIn("from airflow.operators.bash_operator import BashOperator", fixed)
+        self.assertIn("from airflow.operators.python_operator import PythonOperator", fixed)
+        self.assertIn("from airflow.operators.dummy_operator import DummyOperator, DummyOperator as EmptyOperator", fixed)
+        self.assertIn("from airflow.operators.python import get_current_context", fixed)
+
+    def test_dual_compat_dag_params(self):
+        rule = DagParamsMigrationRule(dual_compat=True)
+        code = (
+            "from airflow import DAG\n"
+            "dag = DAG('test', schedule_interval='0 0 * * *')\n"
+        )
+        fixed, applied = rule.fix(code, "dag.py")
+        self.assertIn('**({"schedule": \'0 0 * * *\'} if AIRFLOW_V_3_0_PLUS else {"schedule_interval": \'0 0 * * *\'})', fixed)
+        self.assertIn("AIRFLOW_V_3_0_PLUS", fixed)
+
+    def test_dual_compat_context_vars(self):
+        rule = ContextVarsMigrationRule(dual_compat=True)
+        code = (
+            "def task_fn(**kwargs):\n"
+            "    dt = kwargs['execution_date']\n"
+        )
+        fixed, applied = rule.fix(code, "dag.py")
+        self.assertIn("(kwargs['logical_date'] if AIRFLOW_V_3_0_PLUS else kwargs['execution_date'])", fixed)
+        self.assertIn("AIRFLOW_V_3_0_PLUS", fixed)
+
 
 if __name__ == "__main__":
     unittest.main()
+

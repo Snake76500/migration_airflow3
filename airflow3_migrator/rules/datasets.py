@@ -28,9 +28,15 @@ class DatasetToAssetMigrationRule(BaseRule):
 
         lines = content.splitlines()
 
+        # Check if already using AIRFLOW_V_3_0_PLUS compat block
+        has_compat_if = any(
+            isinstance(n, ast.If) and "AIRFLOW_V_3_0_PLUS" in ast.unparse(n.test)
+            for n in ast.walk(tree)
+        )
+
         for node in ast.walk(tree):
-            # Check import from airflow.datasets import Dataset
-            if isinstance(node, ast.ImportFrom) and node.module == "airflow.datasets":
+            # Check import from airflow.datasets import Dataset (only if not handled by dual_compat)
+            if not self.dual_compat and not has_compat_if and isinstance(node, ast.ImportFrom) and node.module == "airflow.datasets":
                 for alias in node.names:
                     if alias.name == "Dataset":
                         line_idx = node.lineno - 1

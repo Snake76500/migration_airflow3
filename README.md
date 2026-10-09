@@ -102,8 +102,64 @@ python3 migrate.py apply /chemin/vers/votre/projet
 ```
 
 Options utiles :
+- `--dual-compat` : **Active le mode bi-compatible (Airflow 2 & 3)**. Génère des blocs `if AIRFLOW_V_3_0_PLUS:` pour les imports et adapte le code (`schedule`, `execution_date`/`logical_date`) pour s'exécuter sur les deux versions simultanément.
 - `--interactive` : Demande confirmation avant d'appliquer.
 - `--no-backup` : Désactive la sauvegarde automatique.
+
+---
+
+### 🌟 Mode Bi-Compatible Airflow 2 & Airflow 3 (`--dual-compat`)
+
+Pour les projets en cours de transition devant **s'exécuter à la fois sur un cluster Airflow 2 et un cluster Airflow 3**, utilisez le flag `--dual-compat` :
+
+```bash
+# Analyse en mode bi-compatible
+python3 migrate.py scan /chemin/vers/projet --dual-compat
+
+# Application des modifications bi-compatibles
+python3 migrate.py apply /chemin/vers/projet --dual-compat
+```
+
+#### Ce que le mode `--dual-compat` génère dans vos DAGs :
+1. **Bloc d'imports conditionnel unifié en tête de fichier** :
+```python
+try:
+    from bp2i_airflow_library.version_compat import AIRFLOW_V_3_0_PLUS
+except ImportError:
+    from airflow.version import version
+    AIRFLOW_V_3_0_PLUS = version.startswith("3")
+
+if AIRFLOW_V_3_0_PLUS:
+    from airflow.providers.standard.operators.bash import BashOperator
+    from airflow.providers.standard.operators.python import PythonOperator
+    from airflow.providers.standard.operators.empty import EmptyOperator, EmptyOperator as DummyOperator
+    from airflow.sdk import Asset, Asset as Dataset, get_current_context
+else:
+    from airflow.operators.bash_operator import BashOperator
+    from airflow.operators.python_operator import PythonOperator
+    from airflow.operators.dummy_operator import DummyOperator, DummyOperator as EmptyOperator
+    from airflow.datasets import Dataset, Dataset as Asset
+    from airflow.operators.python import get_current_context
+```
+
+2. **Différences dans le code gérées dynamiquement** :
+- **Paramètre schedule / schedule_interval** :
+  ```python
+  **({"schedule": "0 2 * * *"} if AIRFLOW_V_3_0_PLUS else {"schedule_interval": "0 2 * * *"})
+  ```
+- **Variables de contexte `execution_date` / `logical_date`** :
+  ```python
+  exec_dt = (kwargs["logical_date"] if AIRFLOW_V_3_0_PLUS else kwargs["execution_date"])
+  ```
+- **Décorateur `@product_action`** :
+  ```python
+  action_id=(
+      Path(__file__).stem.replace(".v1.", ".v2")
+      if AIRFLOW_V_3_0_PLUS and not ENVIRONMENT.endswith("prod")
+      else Path(__file__).stem
+  )
+  ```
+- **Alias bidirectionnels** : `EmptyOperator` et `DummyOperator`, `Asset` et `Dataset` sont déclarés dans les deux branches pour éviter tout `NameError`.
 
 ---
 
@@ -119,10 +175,15 @@ Tous les fichiers modifiés sont instantanément restaurés à leur état d'orig
 ### 5. Intégration CI/CD (Check)
 Pour valider automatiquement dans votre pipeline GitHub Actions, GitLab CI ou pre-commit qu'un projet est compatible Airflow 3 :
 ```bash
+# Vérification Airflow 3 standard
 python3 migrate.py check /chemin/vers/votre/projet
+
+# Vérification avec tolérance pour le code bi-compatible
+python3 migrate.py check /chemin/vers/votre/projet --dual-compat
 ```
-- Renvoie **`0`** si le projet est 100% compatible Airflow 3.
+- Renvoie **`0`** si le projet est conforme.
 - Renvoie **`1`** si des incompatibilités sont détectées.
+
 
 ---
 
