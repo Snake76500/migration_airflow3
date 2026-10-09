@@ -27,7 +27,15 @@ def create_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument(
         "--dual-compat",
         action="store_true",
-        help="Mode bi-compatible Airflow 2 et Airflow 3 (génère des blocs 'if AIRFLOW_V_3_0_PLUS:')",
+        default=True,
+        help="Mode bi-compatible Airflow 2 et Airflow 3 avec bloc 'if AIRFLOW_V_3_0_PLUS:' (activé par défaut)",
+    )
+    scan_parser.add_argument(
+        "--no-dual-compat",
+        "--pure-v3",
+        dest="no_dual_compat",
+        action="store_true",
+        help="Désactiver le mode bi-compatible (migration directe vers Airflow 3 pur)",
     )
 
     # Command: report (generate report files)
@@ -47,7 +55,15 @@ def create_parser() -> argparse.ArgumentParser:
     report_parser.add_argument(
         "--dual-compat",
         action="store_true",
-        help="Mode bi-compatible Airflow 2 et Airflow 3 (génère des blocs 'if AIRFLOW_V_3_0_PLUS:')",
+        default=True,
+        help="Mode bi-compatible Airflow 2 et Airflow 3 avec bloc 'if AIRFLOW_V_3_0_PLUS:' (activé par défaut)",
+    )
+    report_parser.add_argument(
+        "--no-dual-compat",
+        "--pure-v3",
+        dest="no_dual_compat",
+        action="store_true",
+        help="Désactiver le mode bi-compatible (migration directe vers Airflow 3 pur)",
     )
 
     # Command: apply (apply fixes)
@@ -58,7 +74,15 @@ def create_parser() -> argparse.ArgumentParser:
     apply_parser.add_argument(
         "--dual-compat",
         action="store_true",
-        help="Appliquer les modifications en mode bi-compatible Airflow 2 et Airflow 3 (if AIRFLOW_V_3_0_PLUS:)",
+        default=True,
+        help="Appliquer en mode bi-compatible Airflow 2 et Airflow 3 (activé par défaut)",
+    )
+    apply_parser.add_argument(
+        "--no-dual-compat",
+        "--pure-v3",
+        dest="no_dual_compat",
+        action="store_true",
+        help="Désactiver le mode bi-compatible (migration directe vers Airflow 3 pur)",
     )
 
     # Command: rollback (restore previous backup)
@@ -71,14 +95,22 @@ def create_parser() -> argparse.ArgumentParser:
     check_parser.add_argument(
         "--dual-compat",
         action="store_true",
-        help="Vérifier la conformité avec prise en compte du mode bi-compatible",
+        default=True,
+        help="Vérifier en mode bi-compatible Airflow 2 et Airflow 3 (activé par défaut)",
+    )
+    check_parser.add_argument(
+        "--no-dual-compat",
+        "--pure-v3",
+        dest="no_dual_compat",
+        action="store_true",
+        help="Vérifier en mode Airflow 3 pur",
     )
 
     return parser
 
 
 def handle_scan(args: argparse.Namespace) -> int:
-    dual_compat = getattr(args, "dual_compat", False)
+    dual_compat = not getattr(args, "no_dual_compat", False)
     engine = MigrationEngine(args.path, dual_compat=dual_compat)
     summary = engine.analyze()
     reporter = MigrationReporter(summary)
@@ -87,12 +119,13 @@ def handle_scan(args: argparse.Namespace) -> int:
 
 
 def handle_report(args: argparse.Namespace) -> int:
-    dual_compat = getattr(args, "dual_compat", False)
+    dual_compat = not getattr(args, "no_dual_compat", False)
     engine = MigrationEngine(args.path, dual_compat=dual_compat)
     summary = engine.analyze()
     reporter = MigrationReporter(summary)
     out_dir = Path(args.output_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
+
 
     generated = []
 
@@ -125,7 +158,7 @@ def handle_report(args: argparse.Namespace) -> int:
 
 
 def handle_apply(args: argparse.Namespace) -> int:
-    dual_compat = getattr(args, "dual_compat", False)
+    dual_compat = not getattr(args, "no_dual_compat", False)
     engine = MigrationEngine(args.path, dual_compat=dual_compat)
 
     # First analyze to show what will be changed
@@ -165,8 +198,9 @@ def handle_rollback(args: argparse.Namespace) -> int:
 
 
 def handle_check(args: argparse.Namespace) -> int:
-    dual_compat = getattr(args, "dual_compat", False)
+    dual_compat = not getattr(args, "no_dual_compat", False)
     engine = MigrationEngine(args.path, dual_compat=dual_compat)
+
     summary = engine.analyze()
     reporter = MigrationReporter(summary)
     reporter.print_console_summary(show_diffs=False)

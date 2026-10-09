@@ -55,7 +55,7 @@ class MigrationSummary:
 class MigrationEngine:
     """Orchestrates scanning, detection, and application of Airflow 3 migrations."""
 
-    def __init__(self, root_path: str, rules: Optional[List[BaseRule]] = None, dual_compat: bool = False):
+    def __init__(self, root_path: str, rules: Optional[List[BaseRule]] = None, dual_compat: bool = True):
         self.root_path = Path(root_path).resolve()
         self.dual_compat = dual_compat
         self.rules = rules or get_all_rules(dual_compat=dual_compat)

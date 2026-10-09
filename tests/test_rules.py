@@ -18,7 +18,7 @@ from airflow3_migrator.rules.sqlalchemy_rules import SQLAlchemyMigrationRule
 class TestMigrationRules(unittest.TestCase):
 
     def test_imports_bash_and_python(self):
-        rule = ImportsMigrationRule()
+        rule = ImportsMigrationRule(dual_compat=False)
         code = "from airflow.operators.bash_operator import BashOperator\n"
         issues = rule.analyze(code, "dag.py")
         self.assertEqual(len(issues), 1)
@@ -28,7 +28,7 @@ class TestMigrationRules(unittest.TestCase):
         self.assertIn("from airflow.providers.standard.operators.bash import BashOperator", fixed)
 
     def test_imports_dummy_operator_to_empty(self):
-        rule = ImportsMigrationRule()
+        rule = ImportsMigrationRule(dual_compat=False)
         code = "from airflow.operators.dummy_operator import DummyOperator\n"
         issues = rule.analyze(code, "dag.py")
         self.assertEqual(len(issues), 1)
@@ -37,8 +37,9 @@ class TestMigrationRules(unittest.TestCase):
         fixed, applied = rule.fix(code, "dag.py")
         self.assertIn("from airflow.providers.standard.operators.empty import EmptyOperator", fixed)
 
+
     def test_imports_get_current_context_to_sdk(self):
-        rule = ImportsMigrationRule()
+        rule = ImportsMigrationRule(dual_compat=False)
         # 1. Single import from airflow.operators.python
         code1 = "from airflow.operators.python import get_current_context\n"
         fixed1, _ = rule.fix(code1, "dag.py")
@@ -56,7 +57,8 @@ class TestMigrationRules(unittest.TestCase):
         self.assertEqual(fixed3, "from airflow.sdk import get_current_context\n")
 
     def test_imports_similar_sdk_and_provider_cases(self):
-        rule = ImportsMigrationRule()
+        rule = ImportsMigrationRule(dual_compat=False)
+
         # Decorators and TaskGroup to airflow.sdk
         code_dec = "from airflow.decorators import dag, task\n"
         fixed_dec, _ = rule.fix(code_dec, "dag.py")
@@ -103,7 +105,7 @@ class TestMigrationRules(unittest.TestCase):
         self.assertNotIn("provide_context", fixed)
 
     def test_dag_schedule_interval_to_schedule(self):
-        rule = DagParamsMigrationRule()
+        rule = DagParamsMigrationRule(dual_compat=False)
         code = "with DAG(dag_id='test', schedule_interval='@daily') as dag:\n    pass\n"
         issues = rule.analyze(code, "dag.py")
         self.assertEqual(len(issues), 1)
@@ -113,7 +115,7 @@ class TestMigrationRules(unittest.TestCase):
         self.assertNotIn("schedule_interval", fixed)
 
     def test_context_vars_execution_date_to_logical_date(self):
-        rule = ContextVarsMigrationRule()
+        rule = ContextVarsMigrationRule(dual_compat=False)
         code = 'dt = kwargs["execution_date"]\ncmd = "echo {{ execution_date }}"\n'
         issues = rule.analyze(code, "dag.py")
         self.assertGreaterEqual(len(issues), 2)
@@ -123,7 +125,7 @@ class TestMigrationRules(unittest.TestCase):
         self.assertIn('{{ logical_date }}', fixed)
 
     def test_datasets_to_assets(self):
-        rule = DatasetToAssetMigrationRule()
+        rule = DatasetToAssetMigrationRule(dual_compat=False)
         code = 'from airflow.datasets import Dataset\nds = Dataset("s3://bucket")\n'
         issues = rule.analyze(code, "dag.py")
         self.assertEqual(len(issues), 2)
@@ -131,6 +133,7 @@ class TestMigrationRules(unittest.TestCase):
         fixed, applied = rule.fix(code, "dag.py")
         self.assertIn("from airflow.sdk import Asset", fixed)
         self.assertIn('Asset("s3://bucket")', fixed)
+
 
     def test_db_access_metadata_flagged(self):
         rule = DatabaseAccessMigrationRule()

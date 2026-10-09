@@ -24,6 +24,12 @@ MODULE_MAPPINGS = {
     # Trigger Dag Run
     "airflow.operators.trigger_dagrun": "airflow.providers.standard.operators.trigger_dagrun",
     "airflow.operators.datetime": "airflow.providers.standard.operators.datetime",
+    # Email
+    "airflow.operators.email": "airflow.providers.standard.operators.email",
+    "airflow.operators.email_operator": "airflow.providers.standard.operators.email",
+    # Weekday / Branch
+    "airflow.operators.weekday": "airflow.providers.standard.operators.weekday",
+    "airflow.operators.branch": "airflow.providers.standard.operators.branch",
     # Standard Sensors
     "airflow.sensors.filesystem": "airflow.providers.standard.sensors.filesystem",
     "airflow.sensors.time_sensor": "airflow.providers.standard.sensors.time",
@@ -33,6 +39,7 @@ MODULE_MAPPINGS = {
     "airflow.sensors.python": "airflow.providers.standard.sensors.python",
     "airflow.sensors.external_task": "airflow.providers.standard.sensors.external_task",
     "airflow.sensors.external_task_sensor": "airflow.providers.standard.sensors.external_task",
+    "airflow.sensors.weekday": "airflow.providers.standard.sensors.weekday",
     # Standard Hooks
     "airflow.hooks.subprocess": "airflow.providers.standard.hooks.subprocess",
     "airflow.hooks.filesystem": "airflow.providers.standard.hooks.filesystem",
@@ -81,14 +88,18 @@ class ImportsMigrationRule(BaseRule):
 
         lines = content.splitlines()
 
-        # Check if already using AIRFLOW_V_3_0_PLUS compat block
-        has_compat_if = any(
-            isinstance(n, ast.If) and "AIRFLOW_V_3_0_PLUS" in ast.unparse(n.test)
-            for n in ast.walk(tree)
-        )
+        # Identify nodes already inside an 'if AIRFLOW_V_3_0_PLUS:' statement
+        compat_if_node_ids = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.If) and "AIRFLOW_V_3_0_PLUS" in ast.unparse(node.test):
+                for child in ast.walk(node):
+                    if child is not node:
+                        compat_if_node_ids.add(id(child))
 
         # Check subdag operator (Removed in Airflow 3)
         for node in ast.walk(tree):
+            if id(node) in compat_if_node_ids:
+                continue
             if isinstance(node, ast.ImportFrom) and node.module:
                 module = node.module
                 line_idx = node.lineno - 1
@@ -143,13 +154,11 @@ class ImportsMigrationRule(BaseRule):
                         )
                     )
 
-        if has_compat_if:
-            # Already dual-compatible, no further import rewrite needed
-            return issues
-
-        # Collect version-dependent imports
+        # Collect version-dependent imports not already inside a compat block
         version_nodes = []
         for node in ast.walk(tree):
+            if id(node) in compat_if_node_ids:
+                continue
             if isinstance(node, ast.ImportFrom) and node.module:
                 if node.module in MODULE_MAPPINGS or any(
                     a.name in SYMBOL_DEST_OVERRIDES or a.name in SYMBOL_MAPPINGS for a in node.names
@@ -200,21 +209,36 @@ class ImportsMigrationRule(BaseRule):
             v3_block = "\n    ".join(v3_lines)
             v2_block = "\n    ".join(v2_lines)
 
-            full_compat_block = (
-                "try:\n"
-                "    from bp2i_airflow_library.version_compat import AIRFLOW_V_3_0_PLUS\n"
-                "except ImportError:\n"
-                "    from airflow.version import version\n"
-                '    AIRFLOW_V_3_0_PLUS = version.startswith("3")\n\n'
-                f"if AIRFLOW_V_3_0_PLUS:\n"
-                f"    {v3_block}\n"
-                f"else:\n"
-                f"    {v2_block}"
+            has_compat_def = any(
+                (isinstance(n, ast.ImportFrom) and any(a.name == "AIRFLOW_V_3_0_PLUS" for a in n.names))
+                or (isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "AIRFLOW_V_3_0_PLUS" for t in n.targets))
+                for n in ast.walk(tree)
             )
+
+            if has_compat_def:
+                full_compat_block = (
+                    f"if AIRFLOW_V_3_0_PLUS:\n"
+                    f"    {v3_block}\n"
+                    f"else:\n"
+                    f"    {v2_block}"
+                )
+            else:
+                full_compat_block = (
+                    "try:\n"
+                    "    from bp2i_airflow_library.version_compat import AIRFLOW_V_3_0_PLUS\n"
+                    "except ImportError:\n"
+                    "    from airflow.version import version\n"
+                    '    AIRFLOW_V_3_0_PLUS = version.startswith("3")\n\n'
+                    f"if AIRFLOW_V_3_0_PLUS:\n"
+                    f"    {v3_block}\n"
+                    f"else:\n"
+                    f"    {v2_block}"
+                )
 
             first_node = version_nodes[0]
             start_idx = first_node.lineno - 1
             orig_snippet = "\n".join(lines[start_idx : first_node.end_lineno or first_node.lineno])
+
 
             issues.append(
                 MigrationIssue(

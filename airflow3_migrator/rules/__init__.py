@@ -16,7 +16,7 @@ from .product_action import ProductActionMigrationRule
 from .sqlalchemy_rules import SQLAlchemyMigrationRule
 
 
-def get_all_rules(dual_compat: bool = False) -> List[BaseRule]:
+def get_all_rules(dual_compat: bool = True) -> List[BaseRule]:
     """Returns instantiated list of all available migration rules."""
     return [
         ImportsMigrationRule(dual_compat=dual_compat),

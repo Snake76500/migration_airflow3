@@ -52,7 +52,8 @@ class TestMigrationEngine(unittest.TestCase):
 
         self.assertIn("airflow.providers.standard.operators.bash", dag_content)
         self.assertIn("airflow.providers.standard.operators.empty", dag_content)
-        self.assertIn('schedule="0 2 * * *"', dag_content)
+        self.assertIn('"schedule": "0 2 * * *"', dag_content)
+        self.assertIn("AIRFLOW_V_3_0_PLUS", dag_content)
         self.assertIn("EmptyOperator", dag_content)
         self.assertIn("logical_date", dag_content)
 

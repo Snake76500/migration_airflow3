@@ -78,7 +78,7 @@ class BaseRule(ABC):
     description: str = "Base rule description"
     documentation_url: str = "https://airflow.apache.org/docs/apache-airflow/stable/upgrading-to-airflow-3.html"
 
-    def __init__(self, dual_compat: bool = False):
+    def __init__(self, dual_compat: bool = True):
         self.dual_compat = dual_compat
 
     @abstractmethod
