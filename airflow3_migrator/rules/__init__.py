@@ -13,6 +13,7 @@ from .db_access import DatabaseAccessMigrationRule
 from .config_rules import ConfigMigrationRule
 from .dependencies import DependenciesMigrationRule
 from .product_action import ProductActionMigrationRule
+from .sqlalchemy_rules import SQLAlchemyMigrationRule
 
 
 def get_all_rules() -> List[BaseRule]:
@@ -27,6 +28,7 @@ def get_all_rules() -> List[BaseRule]:
         ConfigMigrationRule(),
         DependenciesMigrationRule(),
         ProductActionMigrationRule(),
+        SQLAlchemyMigrationRule(),
     ]
 
 
@@ -44,5 +46,6 @@ __all__ = [
     "ConfigMigrationRule",
     "DependenciesMigrationRule",
     "ProductActionMigrationRule",
+    "SQLAlchemyMigrationRule",
     "get_all_rules",
 ]
