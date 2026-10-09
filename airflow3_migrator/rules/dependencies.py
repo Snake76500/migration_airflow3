@@ -12,9 +12,9 @@ class DependenciesMigrationRule(BaseRule):
     category = IssueCategory.DEPENDENCY
     title = "Mise à jour des dépendances du projet pour Airflow 3.1 et SQLAlchemy 2.0"
     description = (
-        "Airflow 3.1 nécessite d'actualiser la version de 'apache-airflow' vers >= 3.1.0, "
-        "d'ajouter 'apache-airflow-providers-standard>=1.0.0' pour les opérateurs usuels "
-        "et de mettre à niveau SQLAlchemy vers >= 2.0.0."
+        "Airflow 3.1 nécessite d'actualiser la version de 'apache-airflow' vers 3.1, "
+        "d'ajouter 'apache-airflow-providers-standard' pour les opérateurs usuels "
+        "et de mettre à niveau SQLAlchemy vers 2.0."
     )
     documentation_url = "https://airflow.apache.org/docs/apache-airflow/stable/upgrading-to-airflow-3.html"
 
@@ -33,21 +33,21 @@ class DependenciesMigrationRule(BaseRule):
                 if "apache-airflow-providers-standard" in clean:
                     has_standard_provider = True
 
-                # Airflow dependency check
+                # Airflow dependency check (target Airflow 3.1 strictly)
                 if re.match(r"^apache-airflow\b", clean) and not clean.startswith("apache-airflow-providers-"):
                     has_airflow = True
                     airflow_line_no = line_no
-                    if not re.search(r"[>=~]\s*3\.1", clean):
-                        suggested = "apache-airflow>=3.1.0"
+                    if not re.search(r"3\.1", clean):
+                        suggested = "apache-airflow~=3.1.0"
                         issues.append(
                             MigrationIssue(
                                 rule_id="AIR309_AIRFLOW_VER",
                                 category=self.category,
                                 severity=IssueSeverity.WARNING,
-                                title="Mise à niveau de 'apache-airflow' vers 3.1+",
+                                title="Mise à niveau de 'apache-airflow' vers Airflow 3.1",
                                 description=(
-                                    f"La version actuelle spécifiée ('{clean}') doit cibler Airflow 3.1+. "
-                                    "Mettez à niveau vers 'apache-airflow>=3.1.0'."
+                                    f"La version actuelle spécifiée ('{clean}') doit cibler Airflow 3.1. "
+                                    "Mettez à niveau vers 'apache-airflow~=3.1.0'."
                                 ),
                                 line_number=line_no,
                                 column=0,
@@ -68,10 +68,10 @@ class DependenciesMigrationRule(BaseRule):
                                 rule_id="SQLA20_DEP",
                                 category=self.category,
                                 severity=IssueSeverity.WARNING,
-                                title="Mise à niveau de SQLAlchemy vers 2.0+ pour Airflow 3.1",
+                                title="Mise à niveau de SQLAlchemy vers 2.0 pour Airflow 3.1",
                                 description=(
                                     f"La version spécifiée ('{clean}') cible SQLAlchemy 1.x. "
-                                    "Airflow 3.1 impose la compatibilité avec SQLAlchemy 2.0+. "
+                                    "Airflow 3.1 impose la compatibilité avec SQLAlchemy 2.0. "
                                     "Mettez à niveau vers 'sqlalchemy>=2.0.0'."
                                 ),
                                 line_number=line_no,
@@ -115,7 +115,7 @@ class DependenciesMigrationRule(BaseRule):
                     if "3.1" not in line:
                         suggested = re.sub(
                             r'["\']apache-airflow(?:\s*[<>=~!][^"\']*)?["\']',
-                            '"apache-airflow>=3.1.0"',
+                            '"apache-airflow~=3.1.0"',
                             line,
                         )
                         issues.append(
@@ -123,8 +123,8 @@ class DependenciesMigrationRule(BaseRule):
                                 rule_id="AIR309_PYPROJECT_VER",
                                 category=self.category,
                                 severity=IssueSeverity.WARNING,
-                                title="Mise à niveau de apache-airflow vers 3.1+ dans pyproject.toml",
-                                description="Mettez à niveau la dépendance apache-airflow vers la version >=3.1.0.",
+                                title="Mise à niveau de apache-airflow vers Airflow 3.1 dans pyproject.toml",
+                                description="Mettez à niveau la dépendance apache-airflow vers la version 3.1.",
                                 line_number=line_no,
                                 column=0,
                                 file_path=file_path,
@@ -168,8 +168,8 @@ class DependenciesMigrationRule(BaseRule):
                                 rule_id="SQLA20_PYPROJECT_DEP",
                                 category=self.category,
                                 severity=IssueSeverity.WARNING,
-                                title="Mise à niveau de sqlalchemy vers 2.0+ dans pyproject.toml",
-                                description="Mettez à niveau la dépendance sqlalchemy vers la version >=2.0.0.",
+                                title="Mise à niveau de sqlalchemy vers 2.0 dans pyproject.toml",
+                                description="Mettez à niveau la dépendance sqlalchemy vers la version 2.0.",
                                 line_number=line_no,
                                 column=0,
                                 file_path=file_path,

@@ -44,7 +44,7 @@ Un outil complet en Python conçu pour scanner un projet Apache Airflow complet,
 | **`AIR305`** | Variables / Jinja | Remplacement de `execution_date` par `logical_date` et `next/prev_execution_date` par `data_interval_end/start` (Python + templates Jinja `{{ ... }}`). | ✅ Oui |
 | **`AIR306`** | Datasets / Assets | Migration de `Dataset(...)` vers `Asset(...)` (`airflow.sdk`). | ✅ Oui |
 | **`AIR308_CFG`** | Configuration | Remplacement de `SequentialExecutor` par `LocalExecutor`, suppression sécurisée de `enable_xcom_pickling`. | ✅ Oui |
-| **`AIR309`** | Dépendances | Mise à jour de `apache-airflow>=3.1.0` et ajout de `apache-airflow-providers-standard>=1.0.0` dans `requirements.txt`. | ✅ Oui |
+| **`AIR309`** | Dépendances | Mise à jour de `apache-airflow~=3.1.0` et ajout de `apache-airflow-providers-standard>=1.0.0` dans `requirements.txt`. | ✅ Oui |
 | **`AIR310_PRODUCT_ACTION`** | Décorateur | Migration de `@product_action` avec calcul dynamique de `action_id` (`Path(__file__).stem`) et ajout des imports `bp2i_airflow_library`. | ✅ Oui |
 | **`SQLA20`** | SQLAlchemy 2.0 | Migration vers SQLAlchemy 2.0 (`execute(text(...))`, `from sqlalchemy.orm import declarative_base`, suppression `Engine.execute()`). | ✅ Oui |
 | **`AIR301_SUBDAG`** | Architecture | Détection critique de `SubDagOperator` (supprimé dans Airflow 3) avec guide de migration vers `TaskGroup`. | 🛠️ Manuel |

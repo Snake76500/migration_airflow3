@@ -30,11 +30,28 @@ MODULE_MAPPINGS = {
     "airflow.sensors.date_time": "airflow.providers.standard.sensors.date_time",
     "airflow.sensors.bash": "airflow.providers.standard.sensors.bash",
     "airflow.sensors.python": "airflow.providers.standard.sensors.python",
+    "airflow.sensors.external_task": "airflow.providers.standard.sensors.external_task",
+    "airflow.sensors.external_task_sensor": "airflow.providers.standard.sensors.external_task",
+    # Standard Hooks
+    "airflow.hooks.subprocess": "airflow.providers.standard.hooks.subprocess",
+    "airflow.hooks.filesystem": "airflow.providers.standard.hooks.filesystem",
+    # Context & Decorators moving to Task SDK
+    "airflow.utils.context": "airflow.sdk",
+    "airflow.decorators": "airflow.sdk",
+    "airflow.utils.task_group": "airflow.sdk",
 }
 
 # Specific symbol transformations
 SYMBOL_MAPPINGS = {
     "DummyOperator": "EmptyOperator",
+}
+
+# Symbols that belong to the stable Task SDK (airflow.sdk) rather than provider operators
+SYMBOL_DEST_OVERRIDES = {
+    "get_current_context": "airflow.sdk",
+    "task": "airflow.sdk",
+    "dag": "airflow.sdk",
+    "TaskGroup": "airflow.sdk",
 }
 
 
@@ -43,8 +60,9 @@ class ImportsMigrationRule(BaseRule):
     category = IssueCategory.IMPORT
     title = "Mise à jour des imports vers les providers standard et le Task SDK"
     description = (
-        "Airflow 3 a déplacé les opérateurs et capteurs standard (Bash, Python, Empty, etc.) "
-        "vers le package séparé 'apache-airflow-providers-standard'. "
+        "Airflow 3 a déplacé les opérateurs, capteurs et hooks standard vers 'apache-airflow-providers-standard'. "
+        "Les fonctionnalités du Task SDK (get_current_context, @task, @dag, TaskGroup) "
+        "doivent désormais être importées depuis 'airflow.sdk'. "
         "De plus, DummyOperator a été supprimé au profit de EmptyOperator."
     )
     documentation_url = "https://airflow.apache.org/docs/apache-airflow/stable/upgrading-to-airflow-3.html"
@@ -63,7 +81,8 @@ class ImportsMigrationRule(BaseRule):
             if isinstance(node, ast.ImportFrom) and node.module:
                 module = node.module
                 line_idx = node.lineno - 1
-                line_content = lines[line_idx] if line_idx < len(lines) else ""
+                end_line_idx = node.end_lineno if node.end_lineno else node.lineno
+                orig_snippet = "\n".join(lines[line_idx:end_line_idx]) if line_idx < len(lines) else ""
 
                 # Check subdag operator (Removed in Airflow 3)
                 if module in ("airflow.operators.subdag", "airflow.operators.subdag_operator") or any(
@@ -77,13 +96,15 @@ class ImportsMigrationRule(BaseRule):
                             title="Suppression de SubDagOperator",
                             description=(
                                 "SubDagOperator a été complètement supprimé dans Airflow 3. "
-                                "Vous devez migrer vos SubDAGs vers des TaskGroups (airflow.utils.task_group.TaskGroup ou airflow.sdk.TaskGroup)."
+                                "Vous devez migrer vos SubDAGs vers des TaskGroups (airflow.sdk.TaskGroup)."
                             ),
                             line_number=node.lineno,
                             column=node.col_offset,
+                            end_line_number=node.end_lineno,
+                            end_column=node.end_col_offset,
                             file_path=file_path,
                             auto_fixable=False,
-                            original_code=line_content,
+                            original_code=orig_snippet,
                             suggested_code="# TODO: Migrer ce SubDAG vers un TaskGroup",
                             documentation_url="https://airflow.apache.org/docs/apache-airflow/stable/core-concepts/task-groups.html",
                         )
@@ -104,35 +125,58 @@ class ImportsMigrationRule(BaseRule):
                             ),
                             line_number=node.lineno,
                             column=node.col_offset,
+                            end_line_number=node.end_lineno,
+                            end_column=node.end_col_offset,
                             file_path=file_path,
                             auto_fixable=False,
-                            original_code=line_content,
-                            suggested_code=f"# Migrer vers le provider approprié",
+                            original_code=orig_snippet,
+                            suggested_code="# Migrer vers le provider approprié",
                             documentation_url="https://airflow.apache.org/docs/apache-airflow-providers/",
                         )
                     )
                     continue
 
-                # Check module mapping
-                if module in MODULE_MAPPINGS:
-                    new_module = MODULE_MAPPINGS[module]
+                # Route symbols to appropriate modules (Task SDK vs Providers Standard)
+                symbols_by_dest: Dict[str, List[str]] = {}
+                needs_migration = False
+
+                for alias in node.names:
+                    target_name = SYMBOL_MAPPINGS.get(alias.name, alias.name)
+                    dest_mod = None
+
+                    # Check symbol-specific override (e.g. get_current_context, task, dag, TaskGroup -> airflow.sdk)
+                    if alias.name in SYMBOL_DEST_OVERRIDES:
+                        dest_mod = SYMBOL_DEST_OVERRIDES[alias.name]
+                    # Check module-level remapping
+                    elif module in MODULE_MAPPINGS:
+                        dest_mod = MODULE_MAPPINGS[module]
+
+                    if dest_mod:
+                        if dest_mod != module or target_name != alias.name:
+                            needs_migration = True
+                        formatted = f"{target_name} as {alias.asname}" if alias.asname else target_name
+                        symbols_by_dest.setdefault(dest_mod, []).append(formatted)
+                    else:
+                        formatted = f"{target_name} as {alias.asname}" if alias.asname else target_name
+                        symbols_by_dest.setdefault(module, []).append(formatted)
+
+                if needs_migration:
+                    indent = re.match(r"^\s*", lines[line_idx]).group(0) if line_idx < len(lines) else ""
+                    replacement_lines = []
+                    for dest_mod, sym_list in symbols_by_dest.items():
+                        replacement_lines.append(f"{indent}from {dest_mod} import {', '.join(sym_list)}")
+                    suggested_code = "\n".join(replacement_lines)
+
+                    has_sdk = any(alias.name in SYMBOL_DEST_OVERRIDES for alias in node.names) or any(
+                        d == "airflow.sdk" for d in symbols_by_dest
+                    )
                     has_dummy = any(alias.name == "DummyOperator" for alias in node.names)
 
-                    # Build suggested replacement
-                    new_names = []
-                    for alias in node.names:
-                        target_name = SYMBOL_MAPPINGS.get(alias.name, alias.name)
-                        if alias.asname:
-                            new_names.append(f"{target_name} as {alias.asname}")
-                        else:
-                            new_names.append(target_name)
-
-                    indent = re.match(r"^\s*", line_content).group(0)
-                    suggested_line = f"{indent}from {new_module} import {', '.join(new_names)}"
-
-                    title = f"Déplacement du module '{module}' vers '{new_module}'"
-                    if has_dummy:
-                        title += " et remplacement de DummyOperator par EmptyOperator"
+                    title = f"Mise à jour de l'import depuis '{module}'"
+                    if has_sdk:
+                        title += " (redirection vers airflow.sdk)"
+                    elif has_dummy:
+                        title += " (remplacement de DummyOperator par EmptyOperator)"
 
                     issues.append(
                         MigrationIssue(
@@ -141,15 +185,18 @@ class ImportsMigrationRule(BaseRule):
                             severity=IssueSeverity.WARNING,
                             title=title,
                             description=(
-                                f"L'import depuis '{module}' doit être mis à jour vers '{new_module}'. "
-                                "Nécessite le package 'apache-airflow-providers-standard'."
+                                f"L'import depuis '{module}' a été restructuré pour Airflow 3 : "
+                                "les opérateurs standard sont dans 'apache-airflow-providers-standard' "
+                                "et les composants Task SDK (get_current_context, @task, TaskGroup) sont dans 'airflow.sdk'."
                             ),
                             line_number=node.lineno,
                             column=node.col_offset,
+                            end_line_number=node.end_lineno,
+                            end_column=node.end_col_offset,
                             file_path=file_path,
                             auto_fixable=True,
-                            original_code=line_content,
-                            suggested_code=suggested_line,
+                            original_code=orig_snippet,
+                            suggested_code=suggested_code,
                             documentation_url=self.documentation_url,
                         )
                     )
@@ -177,6 +224,8 @@ class ImportsMigrationRule(BaseRule):
                                 description=f"Le module {alias.name} se trouve maintenant dans {new_module}.",
                                 line_number=node.lineno,
                                 column=node.col_offset,
+                                end_line_number=node.end_lineno,
+                                end_column=node.end_col_offset,
                                 file_path=file_path,
                                 auto_fixable=True,
                                 original_code=line_content,
@@ -203,11 +252,13 @@ class ImportsMigrationRule(BaseRule):
         )
 
         for issue in fixable_issues:
-            line_idx = issue.line_number - 1
-            if line_idx < len(lines):
+            start_idx = issue.line_number - 1
+            end_idx = issue.end_line_number if issue.end_line_number else issue.line_number
+            if start_idx < len(lines):
                 # Check for line endings
-                has_newline = lines[line_idx].endswith("\n")
-                lines[line_idx] = issue.suggested_code + ("\n" if has_newline else "")
+                has_newline = lines[min(end_idx - 1, len(lines) - 1)].endswith("\n")
+                rep = issue.suggested_code + ("\n" if has_newline else "")
+                lines[start_idx:end_idx] = [rep]
                 applied.append(issue)
 
         return "".join(lines), applied

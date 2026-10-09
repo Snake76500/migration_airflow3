@@ -37,6 +37,45 @@ class TestMigrationRules(unittest.TestCase):
         fixed, applied = rule.fix(code, "dag.py")
         self.assertIn("from airflow.providers.standard.operators.empty import EmptyOperator", fixed)
 
+    def test_imports_get_current_context_to_sdk(self):
+        rule = ImportsMigrationRule()
+        # 1. Single import from airflow.operators.python
+        code1 = "from airflow.operators.python import get_current_context\n"
+        fixed1, _ = rule.fix(code1, "dag.py")
+        self.assertEqual(fixed1, "from airflow.sdk import get_current_context\n")
+
+        # 2. Combined import with PythonOperator
+        code2 = "from airflow.operators.python import PythonOperator, get_current_context\n"
+        fixed2, _ = rule.fix(code2, "dag.py")
+        self.assertIn("from airflow.providers.standard.operators.python import PythonOperator", fixed2)
+        self.assertIn("from airflow.sdk import get_current_context", fixed2)
+
+        # 3. Import from airflow.utils.context
+        code3 = "from airflow.utils.context import get_current_context\n"
+        fixed3, _ = rule.fix(code3, "dag.py")
+        self.assertEqual(fixed3, "from airflow.sdk import get_current_context\n")
+
+    def test_imports_similar_sdk_and_provider_cases(self):
+        rule = ImportsMigrationRule()
+        # Decorators and TaskGroup to airflow.sdk
+        code_dec = "from airflow.decorators import dag, task\n"
+        fixed_dec, _ = rule.fix(code_dec, "dag.py")
+        self.assertEqual(fixed_dec, "from airflow.sdk import dag, task\n")
+
+        code_tg = "from airflow.utils.task_group import TaskGroup\n"
+        fixed_tg, _ = rule.fix(code_tg, "dag.py")
+        self.assertEqual(fixed_tg, "from airflow.sdk import TaskGroup\n")
+
+        # ExternalTaskSensor to standard provider
+        code_sensor = "from airflow.sensors.external_task import ExternalTaskSensor\n"
+        fixed_sensor, _ = rule.fix(code_sensor, "dag.py")
+        self.assertEqual(fixed_sensor, "from airflow.providers.standard.sensors.external_task import ExternalTaskSensor\n")
+
+        # SubprocessHook to standard provider
+        code_hook = "from airflow.hooks.subprocess import SubprocessHook\n"
+        fixed_hook, _ = rule.fix(code_hook, "dag.py")
+        self.assertEqual(fixed_hook, "from airflow.providers.standard.hooks.subprocess import SubprocessHook\n")
+
     def test_subdag_operator_flagged_critical(self):
         rule = ImportsMigrationRule()
         code = "from airflow.operators.subdag import SubDagOperator\n"
@@ -131,7 +170,7 @@ class TestMigrationRules(unittest.TestCase):
         self.assertGreaterEqual(len(issues), 2)
 
         fixed, applied = rule.fix(reqs, "requirements.txt")
-        self.assertIn("apache-airflow>=3.1.0", fixed)
+        self.assertIn("apache-airflow~=3.1.0", fixed)
         self.assertIn("apache-airflow-providers-standard>=1.0.0", fixed)
         self.assertIn("sqlalchemy>=2.0.0", fixed)
 
