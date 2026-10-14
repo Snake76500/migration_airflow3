@@ -33,13 +33,16 @@ class ProductActionMigrationRule(BaseRule):
                     if isinstance(dec, ast.Call):
                         func_name = getattr(dec.func, "id", "") or getattr(dec.func, "attr", "")
                         if func_name == "product_action":
-                            # Check if already migrated
                             already_migrated = False
+                            stem_kw = None
                             for kw in dec.keywords:
                                 if kw.arg == "action_id":
                                     kw_text = ast.unparse(kw.value)
-                                    if "Path(__file__).stem" in kw_text or "AIRFLOW_V_3_0_PLUS" in kw_text:
+                                    if "AIRFLOW_V_3_0_PLUS" in kw_text or "replace(" in kw_text:
                                         already_migrated = True
+                                        break
+                                    if "Path(__file__).stem" in kw_text or "Path(__file__).steam" in kw_text:
+                                        stem_kw = kw
                                         break
 
                             if already_migrated:
@@ -49,49 +52,113 @@ class ProductActionMigrationRule(BaseRule):
                             end_idx = dec.end_lineno if dec.end_lineno else dec.lineno
                             orig_snippet = "\n".join(lines[start_idx:end_idx])
 
-                            # Determine indentation
                             first_line = lines[start_idx] if start_idx < len(lines) else ""
                             indent = re.match(r"^\s*", first_line).group(0)
 
-                            # Build suggested replacement
-                            new_kwargs = []
-                            new_kwargs.append(
-                                f"{indent}    action_id=(\n"
-                                f'{indent}        Path(__file__).stem.replace(".v1.", ".v2")\n'
-                                f'{indent}        if AIRFLOW_V_3_0_PLUS and not ENVIRONMENT.endswith("prod")\n'
-                                f"{indent}        else Path(__file__).stem\n"
-                                f"{indent}    )"
+                            if stem_kw is not None:
+                                kw_line_idx = getattr(stem_kw, "lineno", dec.lineno) - 1
+                                orig_kw_line = lines[kw_line_idx] if 0 <= kw_line_idx < len(lines) else "action_id=" + ast.unparse(stem_kw.value)
+                                suggested_kw_line = re.sub(
+                                    r"action_id\s*=\s*Path\(\s*__file__\s*\)\.stea?m",
+                                    'action_id=Path(__file__).stem.replace(".v1.", ".v2")',
+                                    orig_kw_line,
+                                )
+                                issues.append(
+                                    MigrationIssue(
+                                        rule_id=self.rule_id,
+                                        category=self.category,
+                                        severity=IssueSeverity.WARNING,
+                                        title="Remplacement de action_id par stem.replace('.v1.', '.v2')",
+                                        description=(
+                                            "Le paramètre 'action_id' utilisant Path(__file__).stem (ou .steam) doit être "
+                                            "remplacé par Path(__file__).stem.replace(\".v1.\", \".v2\")."
+                                        ),
+                                        line_number=getattr(stem_kw, "lineno", dec.lineno),
+                                        column=getattr(stem_kw, "col_offset", dec.col_offset),
+                                        end_line_number=getattr(stem_kw, "end_lineno", dec.end_lineno),
+                                        end_column=getattr(stem_kw, "end_col_offset", dec.end_col_offset),
+                                        file_path=file_path,
+                                        auto_fixable=True,
+                                        original_code=orig_kw_line.strip(),
+                                        suggested_code=suggested_kw_line.strip(),
+                                        documentation_url=self.documentation_url,
+                                    )
+                                )
+                            else:
+                                # Build suggested replacement for missing or static action_id
+                                new_kwargs = []
+                                new_kwargs.append(
+                                    f"{indent}    action_id=(\n"
+                                    f'{indent}        Path(__file__).stem.replace(".v1.", ".v2")\n'
+                                    f'{indent}        if AIRFLOW_V_3_0_PLUS and not ENVIRONMENT.endswith("prod")\n'
+                                    f"{indent}        else Path(__file__).stem\n"
+                                    f"{indent}    )"
+                                )
+
+                                for kw in dec.keywords:
+                                    if kw.arg != "action_id":
+                                        val_str = ast.get_source_segment(content, kw.value) or ast.unparse(kw.value)
+                                        new_kwargs.append(f"{indent}    {kw.arg}={val_str}")
+
+                                suggested_block = (
+                                    f"{indent}@product_action(\n"
+                                    + ",\n".join(new_kwargs)
+                                    + f"\n{indent})"
+                                )
+
+                                issues.append(
+                                    MigrationIssue(
+                                        rule_id=self.rule_id,
+                                        category=self.category,
+                                        severity=IssueSeverity.WARNING,
+                                        title="Mise à niveau du décorateur @product_action (action_id dynamique)",
+                                        description=(
+                                            "Le décorateur @product_action doit être mis à niveau pour calculer "
+                                            "dynamiquement 'action_id' selon la version d'Airflow et l'environnement."
+                                        ),
+                                        line_number=dec.lineno,
+                                        column=dec.col_offset,
+                                        end_line_number=dec.end_lineno,
+                                        end_column=dec.end_col_offset,
+                                        file_path=file_path,
+                                        auto_fixable=True,
+                                        original_code=orig_snippet,
+                                        suggested_code=suggested_block,
+                                        documentation_url=self.documentation_url,
+                                    )
+                                )
+
+            elif isinstance(node, ast.Assign):
+                is_action_id = any(isinstance(t, ast.Name) and t.id == "action_id" for t in node.targets)
+                if is_action_id:
+                    val_text = ast.unparse(node.value)
+                    if not ("AIRFLOW_V_3_0_PLUS" in val_text or "replace(" in val_text):
+                        if "Path(__file__).stem" in val_text or "Path(__file__).steam" in val_text:
+                            line_idx = node.lineno - 1
+                            orig_line = lines[line_idx] if 0 <= line_idx < len(lines) else "action_id=" + val_text
+                            suggested_line = re.sub(
+                                r"action_id\s*=\s*Path\(\s*__file__\s*\)\.stea?m",
+                                'action_id=Path(__file__).stem.replace(".v1.", ".v2")',
+                                orig_line,
                             )
-
-                            for kw in dec.keywords:
-                                if kw.arg != "action_id":
-                                    val_str = ast.get_source_segment(content, kw.value) or ast.unparse(kw.value)
-                                    new_kwargs.append(f"{indent}    {kw.arg}={val_str}")
-
-                            suggested_block = (
-                                f"{indent}@product_action(\n"
-                                + ",\n".join(new_kwargs)
-                                + f"\n{indent})"
-                            )
-
                             issues.append(
                                 MigrationIssue(
                                     rule_id=self.rule_id,
                                     category=self.category,
                                     severity=IssueSeverity.WARNING,
-                                    title="Mise à niveau du décorateur @product_action (action_id dynamique)",
+                                    title="Remplacement de action_id par stem.replace('.v1.', '.v2')",
                                     description=(
-                                        "Le décorateur @product_action doit être mis à niveau pour calculer "
-                                        "dynamiquement 'action_id' selon la version d'Airflow et l'environnement."
+                                        "L'assignation 'action_id' utilisant Path(__file__).stem (ou .steam) doit être "
+                                        "remplacée par Path(__file__).stem.replace(\".v1.\", \".v2\")."
                                     ),
-                                    line_number=dec.lineno,
-                                    column=dec.col_offset,
-                                    end_line_number=dec.end_lineno,
-                                    end_column=dec.end_col_offset,
+                                    line_number=node.lineno,
+                                    column=node.col_offset,
+                                    end_line_number=node.end_lineno,
+                                    end_column=node.end_col_offset,
                                     file_path=file_path,
                                     auto_fixable=True,
-                                    original_code=orig_snippet,
-                                    suggested_code=suggested_block,
+                                    original_code=orig_line.strip(),
+                                    suggested_code=suggested_line.strip(),
                                     documentation_url=self.documentation_url,
                                 )
                             )
@@ -111,58 +178,64 @@ class ProductActionMigrationRule(BaseRule):
         lines = content.splitlines(keepends=True)
         applied: List[MigrationIssue] = []
 
-        # Find all target decorators
-        decorators_to_fix = []
+        # Find decorators needing full replacement (without stem/steam action_id)
+        decorators_to_full_fix = []
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 for dec in node.decorator_list:
                     if isinstance(dec, ast.Call):
                         func_name = getattr(dec.func, "id", "") or getattr(dec.func, "attr", "")
                         if func_name == "product_action":
-                            # Check if already migrated
                             already_migrated = False
+                            has_stem_action_id = False
                             for kw in dec.keywords:
                                 if kw.arg == "action_id":
                                     kw_text = ast.unparse(kw.value)
-                                    if "Path(__file__).stem" in kw_text or "AIRFLOW_V_3_0_PLUS" in kw_text:
+                                    if "AIRFLOW_V_3_0_PLUS" in kw_text or "replace(" in kw_text:
                                         already_migrated = True
                                         break
-                            if not already_migrated:
-                                decorators_to_fix.append(dec)
+                                    if "Path(__file__).stem" in kw_text or "Path(__file__).steam" in kw_text:
+                                        has_stem_action_id = True
+                                        break
+                            if not already_migrated and not has_stem_action_id:
+                                decorators_to_full_fix.append(dec)
 
-        if not decorators_to_fix:
-            return content, []
+        # Full replace decorators that don't have stem/steam action_id
+        if decorators_to_full_fix:
+            decorators_to_full_fix.sort(key=lambda d: d.lineno, reverse=True)
+            for dec in decorators_to_full_fix:
+                start_idx = dec.lineno - 1
+                end_idx = dec.end_lineno if dec.end_lineno else dec.lineno
+                orig_first_line = lines[start_idx]
+                indent = re.match(r"^\s*", orig_first_line).group(0)
 
-        # Sort in reverse line order to preserve line indices
-        decorators_to_fix.sort(key=lambda d: d.lineno, reverse=True)
+                new_kwargs = []
+                new_kwargs.append(
+                    f"{indent}    action_id=(\n"
+                    f'{indent}        Path(__file__).stem.replace(".v1.", ".v2")\n'
+                    f'{indent}        if AIRFLOW_V_3_0_PLUS and not ENVIRONMENT.endswith("prod")\n'
+                    f"{indent}        else Path(__file__).stem\n"
+                    f"{indent}    )"
+                )
 
-        for dec in decorators_to_fix:
-            start_idx = dec.lineno - 1
-            end_idx = dec.end_lineno if dec.end_lineno else dec.lineno
-            orig_first_line = lines[start_idx]
-            indent = re.match(r"^\s*", orig_first_line).group(0)
+                for kw in dec.keywords:
+                    if kw.arg != "action_id":
+                        val_str = ast.get_source_segment(content, kw.value) or ast.unparse(kw.value)
+                        new_kwargs.append(f"{indent}    {kw.arg}={val_str}")
 
-            new_kwargs = []
-            new_kwargs.append(
-                f"{indent}    action_id=(\n"
-                f'{indent}        Path(__file__).stem.replace(".v1.", ".v2")\n'
-                f'{indent}        if AIRFLOW_V_3_0_PLUS and not ENVIRONMENT.endswith("prod")\n'
-                f"{indent}        else Path(__file__).stem\n"
-                f"{indent}    )"
-            )
+                rep = (
+                    f"{indent}@product_action(\n"
+                    + ",\n".join(new_kwargs)
+                    + f"\n{indent})\n"
+                )
 
-            for kw in dec.keywords:
-                if kw.arg != "action_id":
-                    val_str = ast.get_source_segment(content, kw.value) or ast.unparse(kw.value)
-                    new_kwargs.append(f"{indent}    {kw.arg}={val_str}")
+                lines[start_idx:end_idx] = [rep]
 
-            rep = (
-                f"{indent}@product_action(\n"
-                + ",\n".join(new_kwargs)
-                + f"\n{indent})\n"
-            )
-
-            lines[start_idx:end_idx] = [rep]
+        # Line replacement for existing action_id=Path(__file__).ste(a)m
+        pattern = re.compile(r"action_id\s*=\s*Path\(\s*__file__\s*\)\.stea?m")
+        for i in range(len(lines)):
+            if pattern.search(lines[i]):
+                lines[i] = pattern.sub('action_id=Path(__file__).stem.replace(".v1.", ".v2")', lines[i])
 
         # Insert missing imports
         interim_code = "".join(lines)
@@ -184,12 +257,16 @@ class ProductActionMigrationRule(BaseRule):
             for n in ast.walk(tree_after)
         )
 
+        needs_path = any(isinstance(n, ast.Name) and n.id == "Path" for n in ast.walk(tree_after))
+        needs_env = any(isinstance(n, ast.Name) and n.id == "ENVIRONMENT" for n in ast.walk(tree_after))
+        needs_compat = any(isinstance(n, ast.Name) and n.id == "AIRFLOW_V_3_0_PLUS" for n in ast.walk(tree_after))
+
         missing_imports: List[str] = []
-        if not has_path:
+        if needs_path and not has_path:
             missing_imports.append("from pathlib import Path\n")
-        if not has_env:
+        if needs_env and not has_env:
             missing_imports.append("from bp2i_airflow_library.config import ENVIRONMENT\n")
-        if not has_compat:
+        if needs_compat and not has_compat:
             missing_imports.append("from bp2i_airflow_library.version_compat import AIRFLOW_V_3_0_PLUS\n")
 
         if missing_imports:

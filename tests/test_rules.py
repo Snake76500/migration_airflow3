@@ -206,6 +206,64 @@ class TestMigrationRules(unittest.TestCase):
         self.assertEqual(len(applied_again), 0)
         self.assertEqual(fixed, fixed_again)
 
+    def test_product_action_existing_stem_or_steam(self):
+        rule = ProductActionMigrationRule()
+
+        # Test case with Path(__file__).steam (typo case)
+        code_steam = (
+            "from datetime import datetime\n\n"
+            "@product_action(\n"
+            "    action_id=Path(__file__).steam,\n"
+            "    payload=yyy,\n"
+            "    tags=['zzz']\n"
+            ")\n"
+            "def my_task():\n"
+            "    pass\n"
+        )
+        issues = rule.analyze(code_steam, "dag.py")
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].rule_id, "AIR310_PRODUCT_ACTION")
+
+        fixed_steam, applied_steam = rule.fix(code_steam, "dag.py")
+        self.assertIn("from pathlib import Path", fixed_steam)
+        self.assertIn('action_id=Path(__file__).stem.replace(".v1.", ".v2")', fixed_steam)
+        self.assertNotIn("steam", fixed_steam)
+        # Should not import AIRFLOW_V_3_0_PLUS or ENVIRONMENT if not needed
+        self.assertNotIn("ENVIRONMENT", fixed_steam)
+        self.assertNotIn("AIRFLOW_V_3_0_PLUS", fixed_steam)
+
+        # Idempotency
+        fixed_again, applied_again = rule.fix(fixed_steam, "dag.py")
+        self.assertEqual(len(applied_again), 0)
+        self.assertEqual(fixed_steam, fixed_again)
+
+        # Test case with Path(__file__).stem
+        code_stem = (
+            "from datetime import datetime\n\n"
+            "@product_action(\n"
+            "    action_id=Path(__file__).stem,\n"
+            "    payload=yyy,\n"
+            ")\n"
+            "def my_other_task():\n"
+            "    pass\n"
+        )
+        issues_stem = rule.analyze(code_stem, "dag.py")
+        self.assertEqual(len(issues_stem), 1)
+        fixed_stem, applied_stem = rule.fix(code_stem, "dag.py")
+        self.assertIn('action_id=Path(__file__).stem.replace(".v1.", ".v2")', fixed_stem)
+
+        # Idempotency
+        fixed_stem_again, applied_stem_again = rule.fix(fixed_stem, "dag.py")
+        self.assertEqual(len(applied_stem_again), 0)
+        self.assertEqual(fixed_stem, fixed_stem_again)
+
+        # Test standalone assignment
+        code_assign = "action_id = Path(__file__).steam\n"
+        issues_assign = rule.analyze(code_assign, "dag.py")
+        self.assertEqual(len(issues_assign), 1)
+        fixed_assign, applied_assign = rule.fix(code_assign, "dag.py")
+        self.assertIn('action_id=Path(__file__).stem.replace(".v1.", ".v2")', fixed_assign)
+
     def test_sqlalchemy_2_migration(self):
         rule = SQLAlchemyMigrationRule(dual_compat=False)
         code = (
